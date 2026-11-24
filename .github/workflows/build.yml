@@ -23,8 +23,21 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # 不依赖 android-actions/setup-android：GitHub 的 ubuntu runner 自带 Android SDK，
+      # 第三方 action 在新镜像上经常跑不起来（v1.5.4 的构建就卡在这一步）。
+      - name: Prepare Android SDK
+        run: |
+          set -u
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "SDK=$SDK"
+          SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKM" ]; then
+            yes 2>/dev/null | "$SDKM" --licenses > /dev/null 2>&1 || true
+            "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1 || true
+          else
+            echo "sdkmanager 不存在，交给 Gradle 自行解析"
+          fi
+          ls "$SDK/platforms" 2>/dev/null || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
