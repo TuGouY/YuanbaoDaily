@@ -1,0 +1,38 @@
+# Build output
+build/
+app/build/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Gradle
+.gradle/
+.kotlin/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+*.hprof
+
+# 本地离线依赖仓库（体积大，不入库）
+.local-m2/
+
+# 调试产物（真机 dump、日志、截图，可能含设备信息）
+evidence/
+*.hprof
+h.xml
+ui*.xml
+screen*.png
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 本地打包脚本与交付物
+tools/
+outputs/

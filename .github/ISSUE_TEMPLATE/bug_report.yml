@@ -1,0 +1,71 @@
+name: Bug 报告
+description: 某项任务不执行、误点、进度不对
+title: "[Bug] "
+labels: [ bug ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请尽量填全，尤其是日志 —— 大部分问题看一眼日志就能定位。
+  - type: input
+    id: module-version
+    attributes:
+      label: 模块版本
+      description: 模块界面顶部或设置里能看到，例如 1.5.4
+    validations:
+      required: true
+  - type: input
+    id: host-version
+    attributes:
+      label: 元宝版本
+      description: 元宝 → 设置 → 关于，例如 2.93.0
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 机型与系统
+      placeholder: 例如 OPPO PLQ110 / Android 15
+    validations:
+      required: true
+  - type: dropdown
+    id: flavor
+    attributes:
+      label: 使用的版本
+      options:
+        - root（LSPosed）
+        - 免 root（无障碍）
+        - 两个都装了
+    validations:
+      required: true
+  - type: dropdown
+    id: task
+    attributes:
+      label: 出问题的任务
+      multiple: true
+      options:
+        - 问元宝问题
+        - 使用写作能力
+        - 使用P图能力
+        - 使用拍题能力
+        - 使用推荐模板做同款
+        - 全部 / 跑不起来
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 现象
+      description: 卡在哪一步？页面有没有打开？输入框里有没有字？
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: 日志
+      description: |
+        执行：`adb logcat -s YuanbaoDaily > log.txt`，复现一次后把文件拖进来。
+        只需保留出问题的那一段。
+      render: text
+    validations:
+      required: false

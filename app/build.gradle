@@ -1,0 +1,132 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+/**
+ * 构建时把"签名用的证书 SHA-256"注入 BuildConfig。
+ *
+ * 运行期 `IntegrityGuard` 拿它和当前安装包的证书比对：不一致说明这个 APK
+ * 被别人重签过（改包最常见的动作），自动化直接拒绝执行。
+ *
+ * 为什么要现算而不是写死：
+ * 写死在源码里，换一台机器用另一个 debug keystore 构建就会自我否认，
+ * 表现为"自己打的包自己不给跑"。现算的结果永远与本次签名一致，
+ * 而重签的包（用别人的证书）依然会被判出来。
+ *
+ * 拿不到 keystore 时留空，运行期退化为"不判断"——不能让校验把正常构建搞挂。
+ */
+def signingCertSha256 = ""
+try {
+    def debugStore = new File(System.getProperty("user.home"), ".android/debug.keystore")
+    if (debugStore.isFile()) {
+        def keyStore = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType())
+        debugStore.withInputStream { keyStore.load(it, "android".toCharArray()) }
+        def cert = keyStore.getCertificate("androiddebugkey")
+        if (cert != null) {
+            signingCertSha256 = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(cert.getEncoded())
+                .encodeHex()
+                .toString()
+        }
+    }
+} catch (Throwable ignored) {
+    signingCertSha256 = ""
+}
+
+android {
+    namespace 'me.codex.yuanbaodaily'
+    compileSdk 34
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        minSdk 24
+        targetSdk 34
+        // 只保留真机用得到的两个 ABI。
+        // ML Kit 的 OCR native 库每个 ABI 约 6~11MB，打进 x86/x86_64 纯属浪费
+        // （那是模拟器架构；本模块要跑在真手机上）。实测四架构 39MB → 两架构 17MB。
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+        // 两个风味共享版本号；具体 applicationId 见 flavor。
+        versionCode 4037
+        versionName "1.5.4"
+        // 签名证书指纹，供 IntegrityGuard 做防重签校验（为空则运行期跳过校验）。
+        buildConfigField 'String', 'SIGNING_CERT_SHA256', "\"${signingCertSha256}\""
+    }
+
+    /**
+     * 两种运行形态，互不干扰、可同时安装：
+     *
+     * - `xposed`（root 版）：LSPosed 模块，代码注入元宝进程，能读宿主 View 树 / WebView，
+     *   必要时还能借 `su` 兜底。包名 `me.codex.yuanbaodaily`（与老版本连续，可覆盖升级）。
+     * - `lite`（免 root 版）：**独立无障碍 App**，不注入任何进程，只靠 AccessibilityService
+     *   读屏与手势完成全部操作，调度器跑在自己的进程里。包名 `me.codex.yuanbaodaily.lite`，
+     *   所以能和 root 版同时装在一台机器上。
+     *
+     * 免 root 版存在的理由很直接：LSPosed 本身需要 root，朋友的手机没有。
+     * 代价是拿不到宿主 View 树与 WebView 内文，进度只能靠无障碍文本推断。
+     */
+    flavorDimensions 'runtime'
+    productFlavors {
+        xposed {
+            dimension 'runtime'
+            applicationId 'me.codex.yuanbaodaily'
+            buildConfigField 'boolean', 'ROOT_MODE', 'true'
+            buildConfigField 'boolean', 'STANDALONE', 'false'
+        }
+        lite {
+            dimension 'runtime'
+            applicationId 'me.codex.yuanbaodaily.lite'
+            buildConfigField 'boolean', 'ROOT_MODE', 'false'
+            buildConfigField 'boolean', 'STANDALONE', 'true'
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+        release {
+            // R8 混淆 + 资源压缩：把类名/成员名改成无意义短名，删掉未被引用的资源。
+            // 反编译后看到的是 a.a.a 而不是 YuanbaoTaskAdapter.fillText，
+            // 改包者要先花时间重建调用关系，再去定位校验点。
+            // 保留规则见 proguard-rules.pro（Xposed 入口、无障碍组件、Shizuku 反射等）。
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions { jvmTarget = '11' }
+
+    testOptions {
+        unitTests {
+            // 纯 JVM 单测里 android.graphics.Rect 等框架类是空壳，
+            // 放行返回默认值后，几何/策略这类纯计算逻辑才能直接跑测试
+            // （否则 "Method width in android.graphics.Rect not mocked"）。
+            returnDefaultValues = true
+        }
+    }
+}
+
+dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
+    // OCR 兜底引擎。只在"无障碍读不到任何文字"时才会被调用，正常路径不加载。
+    // 用 Google ML Kit 的中文文本识别（模型随 APK 打包、离线可用），
+    // 而不是 PaddleOCR+onnxruntime：后者需要自己转 ONNX 并引入 17MB 的推理库，
+    // 这条兜底链路用不上那么强的能力。引擎放在 OcrEngine 接口后面，将来要换随时可换。
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    // Shizuku：免 root 版拿"特权"的唯一无电脑途径（无线调试配对一次即可）。
+    // 只在 lite 风味用得到（见 PrivilegedExecutor），但依赖放在公共配置里，
+    // 免得为了 50KB 的 api 去做 flavor 源集拆分、增加维护成本。
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
+    testImplementation 'junit:junit:4.13.2'
+}

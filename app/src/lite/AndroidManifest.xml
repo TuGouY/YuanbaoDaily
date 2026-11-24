@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      **只属于免 root 版（lite）的清单项。**
+
+      ## 1. Shizuku 的 provider
+
+      Shizuku 通过这个 provider 把 binder 交给应用（`Shizuku.pingBinder()` 依赖它）。
+      authorities 必须唯一，所以用 ${applicationId}.shizuku。
+      放在 lite 清单里而不是主清单：root 版本来就是 root，用不到 Shizuku，
+      没必要多一个 exported provider（多一个外部可寻址的入口就是多一点攻击面）。
+
+      ## 2. 前台服务
+
+      见 KeepAliveService。foregroundServiceType="specialUse" 是 Android 14
+      （targetSdk 34）的硬性要求 —— 不声明类型的话 startForeground 会抛异常。
+      选 specialUse 是因为这个服务确实不属于 media/dataSync/location 任何一类：
+      它只是让"定时跑无障碍任务"的进程不被系统提前回收。
+    -->
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <service
+            android:name=".task.KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="定时执行无障碍自动化任务，需保持进程存活以免错过每日任务" />
+        </service>
+    </application>
+</manifest>

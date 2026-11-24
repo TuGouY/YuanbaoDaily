@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+        无障碍服务自愈用：ColorOS 重启后会杀掉模块进程且不自动重绑无障碍服务，
+        导致"定位不到输入框"。拿到这个权限后模块可以自己改写
+        enabled_accessibility_services 强制重绑（等价于用户手动关开开关）。
+        属于 signature|privileged 权限，需一次性 adb 授权：
+            adb shell pm grant me.codex.yuanbaodaily android.permission.WRITE_SECURE_SETTINGS
+        没授权也不影响其它功能，只是自愈会失败并在日志里明确说明。
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <queries>
+        <package android:name="com.tencent.hunyuan.app.chat" />
+    </queries>
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@drawable/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <!--
+            LSPosed 的四个 meta-data 放在 `src/xposed/AndroidManifest.xml`（只在 root 版里）：
+            免 root 版是独立无障碍 App，不该被 LSPosed Manager 认成模块。
+        -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <receiver
+            android:name=".task.ProgressSyncReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="me.codex.yuanbaodaily.action.PROGRESS_SYNC" />
+            </intent-filter>
+        </receiver>
+        <provider
+            android:name=".config.YuanbaoConfigProvider"
+            android:authorities="${applicationId}.config"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            tools:ignore="ExportedContentProvider" />
+        <service
+            android:name=".automation.AutomationAccessibilityService"
+            android:description="@string/accessibility_service_description"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+        <!--
+            Bounded binder bridge for the injected host. Exported because the host
+            lives in another package; every transaction is checked against the
+            caller uid inside AutomationCommandService.
+        -->
+        <service
+            android:name=".automation.AutomationCommandService"
+            android:exported="true"
+            tools:ignore="ExportedService" />
+        <receiver
+            android:name=".task.DailyAlarmReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="me.codex.yuanbaodaily.action.DAILY_ALARM" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

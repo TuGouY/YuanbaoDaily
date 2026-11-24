@@ -1,0 +1,9 @@
+<resources>
+    <!--
+        免 root 版（lite 风味）的显示名。故意和 root 版不同：
+        两台版本可以同时装在一台机器上，桌面图标和无障碍列表里都得一眼分得清。
+    -->
+    <string name="app_name">元宝每日任务·免root</string>
+    <string name="accessibility_service_label">元宝任务自动化（免root版）</string>
+    <string name="accessibility_service_description">免 root 版：仅通过无障碍读屏与手势执行元宝每日任务中的文本填写、按钮点击和素材选择，不读取其它应用数据。</string>
+</resources>

@@ -1,0 +1,5 @@
+<resources>
+    <!-- root 版（xposed 风味）沿用原名，避免老用户升级后认不出来。 -->
+    <string name="app_name">元宝每日任务</string>
+    <string name="accessibility_service_label">元宝每日任务自动化</string>
+</resources>

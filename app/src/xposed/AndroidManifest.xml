@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    仅 root 版（xposed 风味）合并这份清单：让 LSPosed Manager 认出本应用是模块，
+    并把元宝声明为默认作用域。
+
+    免 root 版（lite 风味）不合并它 —— 它只是一个普通的无障碍 App，
+    如果也带 `xposedmodule=true`，装了 LSPosed 的机器上会被当成模块列表里的一项，
+    对没有 root 的用户只会造成困惑。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="腾讯元宝每日任务调度模块（root 版）" />
+        <meta-data android:name="xposedminversion" android:value="93" />
+        <meta-data android:name="xposedscope" android:value="com.tencent.hunyuan.app.chat" />
+    </application>
+</manifest>

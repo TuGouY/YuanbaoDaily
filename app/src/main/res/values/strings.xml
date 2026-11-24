@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">元宝每日任务</string>
+    <string name="accessibility_service_label">元宝每日任务自动化</string>
+    <string name="accessibility_service_description">用于执行元宝每日任务中的文本填写、按钮点击和素材选择。</string>
+    <!-- 前台服务（只有免 root 版会真正启动，见 KeepAliveService） -->
+    <string name="keepalive_channel_name">后台运行状态</string>
+    <string name="keepalive_channel_description">常驻通知，用于让系统保留进程，保证每日任务能按时触发。可随时在系统设置里关闭本应用的通知。</string>
+    <string name="keepalive_idle">待命中 · 到点会自动执行每日任务</string>
+</resources>
