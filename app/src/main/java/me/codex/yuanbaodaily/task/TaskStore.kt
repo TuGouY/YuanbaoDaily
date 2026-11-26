@@ -28,12 +28,12 @@ internal class TaskStore(context: Context) {
      * 避免两边跨零点时算到不同日期。
      */
     fun setConfirmed(day: String, kind: DailyTaskKind, completed: Int) {
-        // 五项任务的 required 都是 3（见 DEFAULT_TASKS），这里按 3 截断。
+        // 五项任务的 required 都是 2（2026-11 元宝改版后），这里按 2 截断。
         YuanbaoSharedStore.putInt(
             appContext,
             statePrefs,
             "$day.${kind.id}",
-            completed.coerceIn(0, 3),
+            completed.coerceIn(0, 2),
         )
     }
 

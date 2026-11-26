@@ -198,7 +198,7 @@ class MainActivity : Activity() {
 
         val sectionRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         sectionRow.addView(text("今日任务", 18, Color.rgb(30, 32, 48), true), LinearLayout.LayoutParams(0, -2, 1f))
-        sectionRow.addView(text("每项 3 次", 12, Color.rgb(137, 140, 158), false))
+        sectionRow.addView(text("每项 ${DEFAULT_TASKS.first().required} 次", 12, Color.rgb(137, 140, 158), false))
         content.addView(sectionRow)
         content.addView(space(10))
 

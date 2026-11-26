@@ -162,7 +162,12 @@ internal class YuanbaoTaskAdapter(
         )
         observedKinds = observedKinds + fromSniffer.keys + fromApi.keys
         // 合并顺序：文字 < 嗅探 < 接口。接口最后覆盖，以服务端口径为准。
-        val merged = fromText + fromSniffer + fromApi
+        // 越界值直接丢弃（当作"读不到"），**不能夹成 required** ——
+        // 夹一下等于把"读错了"变成"做完了"，那一项就再也不会执行。
+        val merged = (fromText + fromSniffer + fromApi).mapNotNull { (kind, value) ->
+            val required = DEFAULT_TASKS.firstOrNull { it.kind == kind }?.required ?: 2
+            value.takeIf { it in 0..required }?.let { kind to it }
+        }.toMap()
         publishProgressToModule(merged)
         return merged
     }
@@ -504,6 +509,7 @@ internal class YuanbaoTaskAdapter(
      * 不用 `addJavascriptInterface`，是因为宿主 WebView 已经挂过别的桥，避免撞名。
      */
     private fun readProgressViaBridge(): Map<DailyTaskKind, Int> {
+        Log.d("progress api: enter")
         val activity = resumedActivity
         if (activity == null) {
             Log.d("progress api: no activity")
@@ -2214,7 +2220,8 @@ internal class YuanbaoTaskAdapter(
             val tapped = AutomationBridge.tapNodeByLabel(context, DRAWER_ENTRY_LABEL) ||
                 clickScreenPointInProcess(entry.first, entry.second)
             Log.w("navigation: 点抽屉入口 @(${entry.first},${entry.second}) attempt=${attempt + 1} tapped=$tapped")
-            pause(DRAWER_SETTLE_MS)
+            // 自适应等待：侧栏一出现就继续，不再固定等 2.5s（用户反馈"打开后要愣几秒"）。
+            awaitCondition(DRAWER_SETTLE_MS) { currentDrawerOpen() }
             if (currentDrawerOpen()) {
                 Log.w("navigation: 侧栏已打开（attempt=${attempt + 1}）")
                 return true
@@ -3045,6 +3052,21 @@ internal class YuanbaoTaskAdapter(
             return submitted
         }
 
+        // 福利中心那张卡片只保证第一轮可用：做完一次后它变成「已领取」，
+        // 第二轮再在福利页里滑动是找不到的（用户实测：反复滑屏）。
+        // 所以这里**直接改走创作页的模板列表** —— 自检链路已证明这条路稳定可用。
+        if (!onTemplateDetailPage()) {
+            Log.d("template: 未进详情页 → 改走创作页模板列表（不在福利中心里滑）")
+            var onCreatePage = ensureHomeSurface("template-route") && openCreatePageFromHome()
+            if (!onCreatePage) {
+                tapTab(TAB_CREATE)
+                pause(3_000L)
+                onCreatePage = templateListVisible(readScreenText(logSample = false))
+            }
+            Log.d("template: 创作页=$onCreatePage")
+            if (!onCreatePage) return false
+        }
+
         val selection = selectUnusedTemplate()
         if (!selection.clicked) {
             // CTA 转场比 900ms 慢时也会走到这里：再确认一次是不是已经停在详情页。
@@ -3055,7 +3077,7 @@ internal class YuanbaoTaskAdapter(
                 Log.d("template: direct-detail(after-miss) submitted=$submitted")
                 return submitted
             }
-            Log.d("template: no unused visible template; scroll retry required")
+            Log.d("template: 创作页里也没找到可点模板（已滑 ${MAX_TEMPLATE_SCROLLS} 屏）")
             return false
         }
         selection.key.takeIf(String::isNotBlank)?.let(usedTemplateKeys::add)
@@ -4755,10 +4777,33 @@ internal class YuanbaoTaskAdapter(
             start,
             minOf(nextTaskStart, nextHeaderStart).coerceAtMost(text.length),
         )
-        // 做同款这一块**不显示 x/3**，做完只会多一个「已领取」徽标（2026-11 真机实测）。
-        // 徽标比数字可靠，直接当作已完成；没徽标就返回 null（读不到 ≠ 没做完），
-        // 由上层按"最多 3 轮"兜底，第一轮发完徽标就会出现，随即收手。
-        if (task == DailyTaskKind.TEMPLATE && section.contains("已领取")) return 3
+        // 做同款：**数字优先，徽标兜底**。
+        //
+        // 旧写法是 `if (section.contains("已领取")) return 3` —— 两个坑：
+        // 1) 3 是写死的，改成每项 2 次后会被夹成 2/2，于是"已完成"，整项永远不再执行；
+        // 2) 新版（2.94.0）每日任务行里本来就有 `(0/2)`，而「已领取」徽标属于旁边的奖品记录，
+        //    截断稍偏就会把徽标算进来 → 0/2 被误判成做完。
+        if (task == DailyTaskKind.TEMPLATE) {
+            // **只认每日任务那一行自己的数字**：`试试大家都在玩的模版，已完成 (0/2)`。
+            // 不能在整个版块里找：紧挨着的「趣味内容 (2/2)」会被当成本项进度，
+            // 于是 0/2 被读成 2/2 → 整项被跳过（用户反馈"做一次就不做了"）。
+            val rowStart = TEMPLATE_ROW_ANCHORS.mapNotNull { anchor ->
+                text.indexOf(anchor, ignoreCase = true).takeIf { it >= 0 }
+            }.minOrNull()
+            if (rowStart != null) {
+                val window = text.substring(
+                    rowStart,
+                    minOf(rowStart + TEMPLATE_ROW_WINDOW, text.length),
+                )
+                PROGRESS_REGEX.findAll(window).forEach { match ->
+                    val current = match.groupValues[1].toIntOrNull() ?: return@forEach
+                    val required = match.groupValues[2].toIntOrNull() ?: return@forEach
+                    if (required in 1..20 && current in 0..required) return current
+                }
+            }
+            // 没有可用的行内数字：返回 null（读不到 ≠ 做完），交给上层按次数兜底。
+            return null
+        }
         return PROGRESS_REGEX.findAll(section).mapNotNull { match ->
             val current = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
             val required = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
@@ -5045,8 +5090,8 @@ internal class YuanbaoTaskAdapter(
         const val MEDIA_GESTURE_VERIFY_MS = 2_500L
         const val MEDIA_ROOT_VERIFY_MS = 3_500L
         const val MEDIA_CONFIRM_VERIFY_MS = 4_000L
-        const val REQUIRED_TEMPLATE_ROUNDS = 3
-        const val MAX_TEMPLATE_SCROLLS = 4
+        const val REQUIRED_TEMPLATE_ROUNDS = 2
+        const val MAX_TEMPLATE_SCROLLS = 8
         const val TEMPLATE_SCROLL_PAUSE_MS = 1_100L
         /**
          * 点「做同款」后等模板详情页渲染出来。
@@ -5102,6 +5147,15 @@ internal class YuanbaoTaskAdapter(
             "每日问元宝", "元宝百宝箱", "做同款模版", "做同款模板",
             "趣问元宝", "每日任务", "兑换商城",
         )
+        /**
+         * 「做同款」每日任务那一行的锚点。
+         *
+         * 2.94.0 的行文案是「试试大家都在玩的模版，已完成 (0/2)」。
+         * 只在这一行附近取数字，才不会把旁边「趣味内容 (2/2)」算进来。
+         */
+        val TEMPLATE_ROW_ANCHORS = listOf("试试大家", "玩玩", "使用推荐模板做同款")
+        /** 行内取数字的窗口长度（够覆盖 "已完成 (0/2)"）。 */
+        const val TEMPLATE_ROW_WINDOW = 60
         /** 页面上出现这些词就说明还在福利中心，不是模板详情页。 */
         val TEMPLATE_DETAIL_EXCLUDE = listOf(
             "每日任务", "元宝百宝箱", "换一波", "做同款模版", "做同款模板",

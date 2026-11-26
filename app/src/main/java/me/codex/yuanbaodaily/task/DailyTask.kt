@@ -16,7 +16,7 @@ enum class DailyTaskKind(val id: String, val title: String, val aliases: List<St
 
 data class DailyTask(
     val kind: DailyTaskKind,
-    val required: Int = 3,
+    val required: Int = 2,
     val retryCount: Int = 2,
     val delayMs: Long = 2_500L,
     /** Number of capability attempts in one pass; ASK gets one warm-up round. */
