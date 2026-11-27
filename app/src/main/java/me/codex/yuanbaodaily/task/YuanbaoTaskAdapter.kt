@@ -204,6 +204,17 @@ internal class YuanbaoTaskAdapter(
         val before = readProgress(task)
         Log.d("${task.title}: host progress before=${before ?: "unknown"}")
         if (!clickDailyTask(task)) {
+            // **找不到按钮 ≠ 这一项没做完。**
+            // 真机 2026-11-27：福利中心里「问元宝」对应的板块已经 2/2 显示"已领取"，
+            // 页面上根本没有「去提问」按钮，于是这里连续 8 次 no target，白耗 8 秒。
+            // 所以点不到时先回头复核这一项的真实进度：已达标就当作完成，别空转。
+            val recheck = readProgress(task)
+            if (recheck != null && recheck >= (DEFAULT_TASKS.firstOrNull { it.kind == task }?.required ?: 2)) {
+                Log.w(
+                    "${task.title}: CTA ${task.cta()} 未找到，但复核进度=$recheck 已达标 → 跳过本项",
+                )
+                return TaskActionResult(true, recheck)
+            }
             Log.d("${task.title}: unique CTA ${task.cta()} not found ${surfaceDiagnostics()}")
             return TaskActionResult(false, null)
         }
@@ -2092,7 +2103,12 @@ internal class YuanbaoTaskAdapter(
      */
     private fun openWelfareByDrawer(): Boolean {
         if (!openAppDrawer()) return false
-        val nodes = AutomationBridge.uiNodes(force = true)
+        // 侧栏刚判定成功时，那次 dump 还在 1s 缓存里，先复用；找不到行再强制重 dump。
+        // 这样正常路径少一次全树 dump（约 0.5~1s）。
+        var nodes = AutomationBridge.uiNodes(force = false)
+        if (WelfareNav.findWelfareRow(nodes, screenWidthPx()) == null) {
+            nodes = AutomationBridge.uiNodes(force = true)
+        }
         // **必须用抽屉专用判据**（标签完全相等 + 行宽受限），不能用 nodeCenter：
         // nodeCenter 取"面积最小的匹配节点"，而侧栏展开时首页的福利卡片仍在无障碍树里，
         // 完全可能选到首页那张卡片的位置 —— 点下去落在侧栏的别的一行上（元宝派/技能），
@@ -2109,6 +2125,12 @@ internal class YuanbaoTaskAdapter(
             if (!openAppDrawer()) return false
         }
         val rowCenter = row.centerX to row.centerY
+        // 真机出现过 (1441,2274) 这种越界坐标（屏宽 1272）—— 那是首页残留节点被当成了侧栏行，
+        // 点下去会落在屏幕外。宁可这一轮返回 false，也不发越界点击。
+        if (rowCenter.first !in 1..width || rowCenter.second !in 1..screenHeightPx()) {
+            Log.w("navigation: 侧栏行坐标越界 (${rowCenter.first},${rowCenter.second}) 屏宽=$width → 放弃本次点击")
+            return false
+        }
         Log.w("navigation: 侧栏点福利中心 @(${rowCenter.first},${rowCenter.second})")
         clickScreenPointInProcess(rowCenter.first, rowCenter.second)
         if (awaitWelfareCenter(6_000L)) {
@@ -2207,10 +2229,34 @@ internal class YuanbaoTaskAdapter(
         return !currentDrawerOpen()
     }
 
-    private fun openAppDrawer(): Boolean {
-        if (currentDrawerOpen()) return true
+    /**
+     * 在 [DRAWER_ENTRY_WAIT_MS] 内反复找抽屉入口。
+     *
+     * 为什么要循环：`ensureHostForeground` 刚把元宝拉到前台时，首页还在渲染，
+     * 无障碍树里没有那个入口节点。单次查找必然落空 → 导航放弃 → 落到
+     * "等待人工进入福利中心"（20 秒）。用户体感就是"打开很快，然后干等好几秒"。
+     */
+    private fun awaitDrawerEntry(): Pair<Int, Int>? {
+        val deadline = SystemClock.uptimeMillis() + DRAWER_ENTRY_WAIT_MS
+        var tries = 0
+        do {
+            tries++
+            AutomationBridge.nodeCenter(context, DRAWER_ENTRY_LABEL)?.let { found ->
+                if (tries > 1) Log.d("navigation: 抽屉入口第 $tries 次找到")
+                return found
+            }
+            pause(DRAWER_ENTRY_RETRY_MS)
+        } while (SystemClock.uptimeMillis() < deadline)
+        Log.w("navigation: ${DRAWER_ENTRY_WAIT_MS}ms 内没等到抽屉入口节点（试了 $tries 次）")
+        return null
+    }
+
+    private fun openAppDrawer(): Boolean {        if (currentDrawerOpen()) return true
         repeat(DRAWER_OPEN_ATTEMPTS) { attempt ->
-            val entry = AutomationBridge.nodeCenter(context, DRAWER_ENTRY_LABEL)
+            // 首页刚拉起来时节点还没生成，单次查找会直接失败，然后掉进
+            // "等待人工进入福利中心" 的 20 秒兜底 —— 用户看到的就是"要等好多秒"。
+            // 这里改成在有限时间内反复查，找到就立刻点，找不到才放弃。
+            val entry = awaitDrawerEntry()
             if (entry == null) {
                 Log.w("navigation: 找不到抽屉入口节点(${DRAWER_ENTRY_LABEL}) attempt=${attempt + 1}")
                 return false
@@ -2220,9 +2266,19 @@ internal class YuanbaoTaskAdapter(
             val tapped = AutomationBridge.tapNodeByLabel(context, DRAWER_ENTRY_LABEL) ||
                 clickScreenPointInProcess(entry.first, entry.second)
             Log.w("navigation: 点抽屉入口 @(${entry.first},${entry.second}) attempt=${attempt + 1} tapped=$tapped")
-            // 自适应等待：侧栏一出现就继续，不再固定等 2.5s（用户反馈"打开后要愣几秒"）。
-            awaitCondition(DRAWER_SETTLE_MS) { currentDrawerOpen() }
-            if (currentDrawerOpen()) {
+            // **最多两次「短等待 + 一次判定」**，每次判定只 dump 一次全树。
+            //
+            // 旧写法是 `awaitCondition(DRAWER_SETTLE_MS) { currentDrawerOpen() }`，
+            // 然后紧接着又 `if (currentDrawerOpen())` —— 两处都是"强制 dump 全树"：
+            // 每 250ms 轮一次、每轮 0.5~2s 的 dump，抽屉早就开了还在傻等，
+            // 用户看到的就是"侧栏秒开，却在原地愣好几秒才点福利中心"。
+            pause(DRAWER_FIRST_CHECK_MS)
+            var opened = currentDrawerOpen()
+            if (!opened) {
+                pause(DRAWER_SECOND_GAP_MS)
+                opened = currentDrawerOpen()
+            }
+            if (opened) {
                 Log.w("navigation: 侧栏已打开（attempt=${attempt + 1}）")
                 return true
             }
@@ -5342,6 +5398,14 @@ internal class YuanbaoTaskAdapter(
         const val DRAWER_OPEN_ATTEMPTS = 5
         /** 侧栏展开动画的等待时长。 */
         const val DRAWER_SETTLE_MS = 2_500L
+        /** 点完抽屉后的第一次判定前等待（够动画走完，又不至于白等）。 */
+        const val DRAWER_FIRST_CHECK_MS = 450L
+        /** 第一次没开时的补等。 */
+        const val DRAWER_SECOND_GAP_MS = 700L
+        /** 等抽屉入口节点出现的最长时间（首页渲染慢时用）。 */
+        const val DRAWER_ENTRY_WAIT_MS = 5_000L
+        /** 两次查找入口之间的间隔。 */
+        const val DRAWER_ENTRY_RETRY_MS = 700L
     /** 能力页的“添加素材”占位文案：先点它，页面才会接收选择器返回的图片。 */
         val MATERIAL_SLOT_TEXT = listOf(
             "点击添加创作素材",
